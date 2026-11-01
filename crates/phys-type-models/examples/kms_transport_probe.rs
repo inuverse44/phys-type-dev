@@ -20,6 +20,10 @@
 //!   the crossing-time delta N of KMS Sec. V, one ingredient at a time. The
 //!   slices are `delta` e-folds after the pivot crosses the horizon, and
 //!   `target` is the output surface of uniform `H`.
+//! - `after <index> <after> <t,...>`: the split from slices 20 and 10
+//!   e-folds before the end, read off `t` e-folds after the end of inflation
+//!   (negative before it), with the background continued `after` e-folds
+//!   past the end.
 //! - `noise <index> <n_c> <target>`: `N` along `chi` from `n_c`, to the `H`
 //!   surface and to `epsilon_H = 1`, to measure the noise of the endpoint.
 //!
@@ -420,6 +424,14 @@ fn main() {
         ),
         ..SpectrumRunSettings::default()
     };
+    let settings = if mode == "after" {
+        SpectrumRunSettings {
+            e_folds_after_end: args[3].parse().unwrap(),
+            ..settings
+        }
+    } else {
+        settings
+    };
     let survey = system
         .survey(at_rest(PHI_START, TRAJECTORIES[index]), &settings)
         .unwrap();
@@ -624,6 +636,37 @@ fn main() {
                 println!("transport_gaussian_at_exit_plus_{delta},{gaussian:.8e}");
                 println!(
                     "transport_full_at_exit_plus_{delta},{full:.8e},intrinsic {intrinsic:.8e}"
+                );
+            }
+        }
+        "after" => {
+            // f_NL read off after the end of inflation. Needs
+            // KMS_BACKGROUND_TOLERANCE=1e-13.
+            let triangle = MomentumTriangle::try_new(k, k, k).unwrap();
+            // KMS_RESPONSE_STEP overrides the RK4 step of the response.
+            let split = SplitSettings {
+                response_step: std::env::var("KMS_RESPONSE_STEP")
+                    .map_or(2.5e-4, |value| value.parse().unwrap()),
+                ..SplitSettings::default()
+            };
+            println!("t,epsilon_h,f_nl_20,f_nl_10,p_zeta");
+            for t in list(&args[4]) {
+                let output = end + t;
+                let results = system
+                    .split_curvature_correlators(
+                        trajectory,
+                        triangle,
+                        &[end - 20.0, end - 10.0],
+                        output,
+                        &split,
+                    )
+                    .unwrap();
+                println!(
+                    "{t},{:.6e},{:.8e},{:.8e},{:.8e}",
+                    system.epsilon_h(&trajectory.state_at(output)),
+                    results[0].reduced_f_nl(),
+                    results[1].reduced_f_nl(),
+                    results[0].dimensionless_power()[0]
                 );
             }
         }

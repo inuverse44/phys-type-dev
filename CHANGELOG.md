@@ -21,12 +21,18 @@ the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `phys-type-models/examples/kms_transport_probe.rs`, the diagnostics of
   issue #67. Its `gap` mode goes from the crossing-time delta N of KMS
   (`f_NL = 43.38` on trajectory 2) to the split (`38.287`) one ingredient
-  at a time: the end surface (`epsilon_H = 1` against uniform `H`) moves it
-  by `-10.3`, the slow-roll velocities at crossing by `-2.0`, and the
+  at a time: where `N` stops being counted (`epsilon_H = 1` or uniform
+  `H`) moves it by `-10.3`, the slow-roll velocities at crossing by `-2.0`, and the
   massless statistics at horizon exit by `+7.2`.
 - `CovariantMultifieldSystem::curvature_response` returns the response of
   the final `zeta` to the phase space on a slice (`CurvatureResponse`), the
   backward half of `split_curvature_correlators`.
+- `SpectrumRunSettings::e_folds_after_end` continues the background survey
+  past the end of inflation (zero by default); `e_folds_at_end` stays at the
+  event. The probe's `after` mode reads off the split `f_NL` of KMS
+  trajectory 2 after inflation: it keeps growing (59 one e-fold after the
+  end, 118 after two), and from about 2.7 e-folds on `P_zeta` and `f_NL`
+  swing by large factors.
 
 - `scripts/chen_wang_squeezed.py` evaluates the squeezed coefficient `s(nu)`
   of quasi-single-field inflation (arXiv:0911.3380, Eq. (5.11)); the
