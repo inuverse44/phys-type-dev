@@ -114,7 +114,7 @@ Jordan frame の作用 $\to$ Einstein frame のシグマ模型 $(G_{IJ},V)$};
 Einstein frame のシグマ模型 $G_{IJ}(\phi)$, $V(\phi)$ を数値的に発展};
 \node[box,below=4mm of engine] (obs) {観測量の層（$\zeta$ への射影、$P_\zeta$, $n_s$, $r$, $B_\zeta$, $\fnl$）\\
 フレーム、スライス、規格化を出力に記録};
-\node[box,below=7mm of obs] (models) {\code{phys-type-models}（別クレート。Higgs, assisted, constant turn, KMS, \dots）\\
+\node[box,below=7mm of obs] (models) {\code{phys-type-models}（別クレート。Higgs, assisted, constant turn, KMS, HKKPT, HMPS, \dots）\\
 コアの公開 API だけを使う。テスト（文献との照合）と図の元データもここに置く};
 \draw[->] (type) -- (theory);
 \draw[->] (theory) -- (engine);
@@ -126,6 +126,91 @@ Einstein frame のシグマ模型 $G_{IJ}(\phi)$, $V(\phi)$ を数値的に発�
 依存はモデルのクレートからコアへの一方向だけである。
 コアが特定のモデルを参照すると、それ自体がコンパイルエラーになる。
 次元の保証と同じ種類の保証を、ソフトウェアの構造にも持たせている。
+
+\subsection{コアとモデル、拡張の余地}
+\label{sec:extension}
+
+拡張の余地はある。
+拡張は二通りに分かれる。
+新しいモデルを足すだけなら、コアには手を入れない。
+扱える物理の範囲を広げるときは、コアの層に部品を足す。
+図~\ref{fig:extension} は、いまある部品と、これから足す部品の位置を示す。
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  core/.style={draw,align=left,inner sep=4pt,font=\footnotesize,text width=6.6cm},
+  ext/.style={draw,dashed,align=left,inner sep=4pt,font=\footnotesize,text width=4.6cm},
+  >=Stealth]
+\node[core] (type) {型の層\\
+\code{quantity}, \code{dimension}, \code{autodiff},\\
+\code{field\_space}, \code{jet\_geometry}, \code{potential}};
+\node[core,below=3mm of type] (theory) {理論の層\\
+\code{theory}：\code{GeneralizedNonminimal<N>} から\\
+Einstein frame へ（metric と Palatini）};
+\node[core,below=3mm of theory] (engine) {エンジンの層\\
+\code{background}, \code{integrate}, \code{multifield},\\
+\code{perturbation}, \code{transport}, \code{spectrum\_run},\\
+\code{bispectrum\_run}, \code{split}};
+\node[core,below=3mm of engine] (obs) {観測量の層\\
+\code{curvature}, \code{spectra}, \code{observation}};
+\node[draw,fit=(type)(obs),inner sep=4pt,label={[font=\footnotesize]above:コア（\code{crates/phys-type}）}] (corebox) {};
+\node[core,below=9mm of obs] (models) {\code{crates/phys-type-models}\\
+\code{kms}, \code{higgs}, \code{assisted}, \code{hkkpt}, \code{constant\_turn},\\
+\code{hmps}, \code{in\_in}（独立な検算）、\code{tests/}, \code{examples/}};
+\node[ext,right=8mm of theory] (horndeski) {$P(X,\phi)$、Horndeski、DHOST\\
+理論のクラスと専用のエンジン};
+\node[ext,right=8mm of engine] (reheat) {再加熱\\
+崩壊率 $\Gamma$ などで、$\zeta$ を\\
+観測の時期まで運ぶ};
+\node[ext,right=8mm of obs] (jordan) {Jordan frame の $\zeta$};
+\node[ext,right=8mm of models] (newmodel) {新しいモデル\\
+作用を $\Omega^2$, $k_{IJ}$, $V_J$ で書ければ、\\
+コアを変えずに足せる};
+\draw[->] (type) -- (theory);
+\draw[->] (theory) -- (engine);
+\draw[->] (engine) -- (obs);
+\draw[->] (models.north) -- node[right,font=\footnotesize]{公開 API だけを使う} (corebox.south);
+\draw[->,dashed] (horndeski) -- (theory);
+\draw[->,dashed] (reheat) -- (engine);
+\draw[->,dashed] (jordan) -- (obs);
+\draw[->,dashed] (newmodel) -- (models);
+\end{tikzpicture}
+\caption{コードの構成。実線の箱はいまある部品、点線の箱はこれから足せる部品とその差し込み先である。}
+\label{fig:extension}
+\end{figure}
+
+コアは \code{crates/phys-type} で、どのモデルも知らない。
+ソースに KMS、HKKPT、Higgs の名前は出てこない。
+型の層は、質量次元、添字の上下、テンソル、4 階までの自動微分を受け持ち、計量から接続、Riemann テンソル、$\nabla R$ を導く。
+理論の層は、作用 $\Omega^2(\phi)R$, $k_{IJ}(\phi)$, $V_J(\phi)$ を Einstein frame のシグマ模型 $(G_{IJ},V)$ に写す。
+エンジンの層は、背景、線形モード、二点と三点の transport を解く。
+\S\ref{sec:kms} で使ったスライスでつなぐ計算（\code{split}）もここにある。
+観測量の層は、結果を $\zeta$ に射影して $P_\zeta$, $n_s$, $\fnl$ を返し、どのフレーム、どのスライスの値かを一緒に記録する。
+場の数 $N$ は型の引数（const generic）なので、1 場の Higgs インフレーションから 3 場以上まで、同じコードで扱える。
+
+コア以外は \code{crates/phys-type-models} にある。
+模型（\code{kms}, \code{higgs}, \code{assisted}, \code{hkkpt}, \code{constant\_turn}, \code{hmps}）と、transport とは別の方法で三点関数を求める \code{in\_in} を置く。
+文献と照らすテストと、図の元データを作る example もここに置く。
+
+コアを変えずにできる拡張は、新しいモデルを足すことである。
+作用を $\Omega^2$, $k_{IJ}$, $V_J$ で書ける模型なら、場の数によらず、metric でも Palatini でも、models のクレートに足すだけで動く。
+KMS の Palatini 版（G5）もこれにあたる。
+
+コアに部品を足す必要がある拡張は、三つある。
+一つ目は再加熱である。
+\ref{app:after-inflation} で見たように、等曲率摂動が残る模型では、インフレーションのあとも $\zeta$ が変わる。
+観測と比べられる値を出すには、場が崩壊する仕組み（たとえば崩壊率 $\Gamma$\cite{EMST2011,LTBC2012}）をエンジンに入れ、$\zeta$ が変わらなくなるまで追う必要がある。
+二つ目は、作用のクラスを広げることである。
+非正準な運動項 $P(X,\phi)$ や Horndeski、DHOST は、いまの理論の層では表せない。
+三点の transport は Einstein frame のシグマ模型について導いたものなので、理論のクラスとともに、それを受けるエンジンも要る（\S\ref{sec:theory}）。
+三つ目は、Jordan frame の $\zeta$ を観測量として返すことである\cite{WMS2012}。
+ループ補正と、preheating の非線形な発展（格子計算）は、いまの設計の範囲の外にある。
+
+拡張のしやすさとは別に、保守のしやすさの課題もある。
+\code{transport.rs} はテストを除いて約 3500 行あり、一つのファイルとしては大きい。
+\ref{app:after-inflation} の診断は example の \code{kms\_transport\_probe}（約 900 行）に書いた。
+インフレーションのあとを追う部分と Floquet 解析は、再加熱を入れるときにライブラリへ移す候補である。
 
 %======================================================================
 \section{型の仕組み}
@@ -1275,7 +1360,7 @@ $H$ が一定の面で $\zeta$ を読み取ると、$\fnl$ は終わりの 0.3, 
 つまり軌道 2 では、インフレーションの終わりでの $\fnl$ は数え終える条件によって変わる。
 面がずれること自体は一般論として知られている\cite{Lyth2005}が、[KMS] は $\epsilon_H=1$ の面しか使っていない（付録~\ref{sec:after-prior}）。
 観測と比べられる値を得るには、インフレーションのあとまで $\zeta$ を追う必要がある。
-追ってみると、この模型ではインフレーションのあとも $\zeta$ が変わり続け、約 2.7 e-fold 後からは $\phi$ のパラメータ共鳴で大きく振れる（付録~\ref{app:after-inflation}）。
+追ってみると、この模型ではインフレーションのあとも $\zeta$ が変わり続け、約 2.7 e-fold 後からは $\phi$ のパラメータ共鳴で大きく振れる（\ref{app:after-inflation}）。
 そこで G4 では、インフレーションの終わり間際（0.01 e-fold 前）の 38.287 を採用する。
 終わりの 0.01 e-fold 前から $\epsilon_H=1$ までの間で読み取る時刻を動かしても、値は 38.29 から 38.83 の間にとどまり、桁は変わらない。
 
@@ -1313,7 +1398,7 @@ transport で求めた統計は、地平線を出る約 1.1 e-fold 前に質量�
 G1 & 完了 & 幾何の閉じた式と自動微分の一致。Eq.~115 の誤植を発見 \\
 G2 & 完了 & 三本の軌道、図、インフレーションの中断に近いことの発見 \\
 G3 & 未着手 & $n_s$（[KMS] は 0.967）と $T_{\mathcal{RS}}$ \\
-G4 & 一部完了 & crossing-time $\delta N$ は一致。スライスでつなぐ計算をライブラリとテストにした（軌道 2 で 38.287）。43.3 との差の内訳は済み（\S\ref{sec:kms-gap}）。値はインフレーションの終わり間際の 38.287 とする（インフレーションのあとは付録~\ref{app:after-inflation}） \\
+G4 & 一部完了 & crossing-time $\delta N$ は一致。スライスでつなぐ計算をライブラリとテストにした（軌道 2 で 38.287）。43.3 との差の内訳は済み（\S\ref{sec:kms-gap}）。値はインフレーションの終わり間際の 38.287 とする（インフレーションのあとは\ref{app:after-inflation}） \\
 G5 & 未着手 & Palatini 版。比べられる文献値がないので整合性のチェックだけ \\
 G6 & 範囲外 & Jordan frame の $\zeta$。別に設計する \\
 \bottomrule
@@ -1916,7 +2001,7 @@ $t$ はインフレーションの終わり（$\epsilon_H=1$）から数えた e
 
 \subsection{\texorpdfstring{$\zeta$}{ζ} の時間変化}
 
-$t$ ごとに $H$ が一定の面で $\zeta$ を読み取り、スライスでつなぐ計算（付録~\ref{app:conditioning}）で $\fnl$ と $P_\zeta$ を求めた。
+$t$ ごとに $H$ が一定の面で $\zeta$ を読み取り、スライスでつなぐ計算（\ref{app:conditioning}）で $\fnl$ と $P_\zeta$ を求めた。
 つなぐスライスは終わりの 20 e-fold 前と 10 e-fold 前で、二つの値は表示した桁まで一致する。
 \begin{center}
 \begin{tabular}{cccc}
@@ -2113,7 +2198,8 @@ G4 の値には、インフレーションの終わり間際（0.01 e-fold 前�
 自動微分・jet の幾何 & \repoas{crates/phys-type/src/autodiff.rs}{autodiff.rs}, \repoas{crates/phys-type/src/jet_geometry.rs}{jet_geometry.rs} \\
 理論の層（フレーム変換） & \repoas{crates/phys-type/src/theory.rs}{theory.rs} \\
 背景・線形摂動 & \repoas{crates/phys-type/src/multifield.rs}{multifield.rs}, \repoas{crates/phys-type/src/perturbation.rs}{perturbation.rs}, \repoas{crates/phys-type/src/spectrum_run.rs}{spectrum_run.rs} \\
-transport & \repoas{crates/phys-type/src/transport.rs}{transport.rs} \\
+transport & \repoas{crates/phys-type/src/transport.rs}{transport.rs}, \repoas{crates/phys-type/src/bispectrum_run.rs}{bispectrum_run.rs} \\
+スライスでつなぐ計算 & \href{\repourl/blob/main/crates/phys-type/src/split.rs}{\texttt{split.rs}} \\
 $\zeta$ への射影 & \repoas{crates/phys-type/src/curvature.rs}{curvature.rs} \\
 KMS の模型 & \repo{crates/phys-type-models/src/kms.rs} \\
 KMS のテスト & \repo{crates/phys-type-models/tests/kms.rs}, \repoas{crates/phys-type-models/tests/kms_trajectories.rs}{kms_trajectories.rs} \\
