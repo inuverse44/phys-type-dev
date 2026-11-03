@@ -1,10 +1,15 @@
-//! Driving a two-field spectrum run and exporting its rows.
+//! Driving spectrum runs and exporting their rows.
 //!
-//! The run has three stages. A background survey locates the end of inflation
-//! and fixes the pivot `k_pivot = a_* H_*`. Each requested wavenumber is then
-//! carried forward to its own `x_init = k/(aH)` crossing, initialized in the
-//! Bunch-Davies vacuum there, and evolved together with the background. The
-//! spectra are projected at one requested output time.
+//! The background survey ([`CovariantMultifieldSystem::survey`]) and the
+//! single-mode spectra ([`CovariantMultifieldSystem::mode_spectrum`]) work for
+//! any number of fields. The labeled CSV run ([`SpectrumRun`]), with adiabatic
+//! and entropy rows, is for two fields.
+//!
+//! A [`SpectrumRun`] has three stages. A background survey locates the end of
+//! inflation and fixes the pivot `k_pivot = a_* H_*`. Each requested wavenumber
+//! is then carried forward to its own `x_init = k/(aH)` crossing, initialized
+//! in the Bunch-Davies vacuum there, and evolved together with the background.
+//! The spectra are projected at one requested output time.
 //!
 //! The accepted background survey states form one cubic-Hermite trajectory in
 //! elapsed e-folds. Every wavenumber then evolves only its mode matrix against

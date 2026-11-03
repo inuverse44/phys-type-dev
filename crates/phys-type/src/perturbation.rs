@@ -1,4 +1,4 @@
-//! Linear two-field perturbations evolved with their background.
+//! Linear perturbations of `N` fields evolved with their background.
 
 use core::ops::{Add, Mul};
 
