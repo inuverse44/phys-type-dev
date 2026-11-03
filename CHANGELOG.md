@@ -19,7 +19,14 @@ the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the same on two slices to `1e-6`, and the split reproduces the transport
   to `1e-5` where the transport converges.
 - `phys-type-models/examples/kms_transport_probe.rs`, the diagnostics of
-  issue #67.
+  issue #67. Its `gap` mode goes from the crossing-time delta N of KMS
+  (`f_NL = 43.38` on trajectory 2) to the split (`38.287`) one ingredient
+  at a time: the end surface (`epsilon_H = 1` against uniform `H`) moves it
+  by `-10.3`, the slow-roll velocities at crossing by `-2.0`, and the
+  massless statistics at horizon exit by `+7.2`.
+- `CovariantMultifieldSystem::curvature_response` returns the response of
+  the final `zeta` to the phase space on a slice (`CurvatureResponse`), the
+  backward half of `split_curvature_correlators`.
 
 - `scripts/chen_wang_squeezed.py` evaluates the squeezed coefficient `s(nu)`
   of quasi-single-field inflation (arXiv:0911.3380, Eq. (5.11)); the

@@ -96,12 +96,18 @@ impl std::error::Error for SplitError {}
 /// The response of the final `zeta` to the phase space `(Q^I, P^I)` on a
 /// slice: index `a < N` is `Q^a`, `a >= N` is `P^(a-N)`. `linear[r]` is
 /// `n_a` of leg `r`; `quadratic[r]` is `n^(r)_ab` with output leg `r` and
-/// inputs in ascending leg order, flattened row-major.
+/// inputs in ascending leg order, flattened row-major. With every leg far
+/// outside the horizon these are the phase-space delta N coefficients
+/// `N_a`, `N_ab` in the transport's variables.
 #[derive(Clone, Debug, PartialEq)]
-struct Response {
-    linear: [Vec<f64>; 3],
-    quadratic: [Vec<f64>; 3],
+pub struct CurvatureResponse {
+    /// `n_a` of each leg, length `2N`.
+    pub linear: [Vec<f64>; 3],
+    /// `n^(r)_ab` of each output leg, row-major `2N x 2N`.
+    pub quadratic: [Vec<f64>; 3],
 }
+
+type Response = CurvatureResponse;
 
 impl Response {
     fn axpy(&self, scale: f64, other: &Self) -> Self {
@@ -316,31 +322,21 @@ where
     P: ThriceDifferentiableMultifieldPotential<N> + Copy,
     G: ThirdOrderFieldSpaceGeometry<N> + CurvatureDerivativeGeometry<N> + Copy,
 {
-    /// `P_zeta` and `B_zeta` of `triangle` on the output slice
-    /// `output_e_folds`, split at each slice of `slices` (elapsed e-folds,
-    /// superhorizon and before `output_e_folds`): the transport up to the
-    /// slice, then the backward response from the output slice. Results come
-    /// in the order of `slices`. `bispectrum_imaginary_ratio` is zero; only
-    /// the real parts on the slice enter.
-    ///
-    /// The slices must lie before any large transient growth of the
-    /// correlators, or the cancellation stays inside the contraction.
-    pub fn split_curvature_correlators(
+    /// The response of `zeta` on the output slice `output_e_folds` to the
+    /// phase space on each slice of `slices` (elapsed e-folds, before
+    /// `output_e_folds`), integrated backwards from the gauge coefficients.
+    /// Results come in the order of `slices`.
+    pub fn curvature_response(
         &self,
         trajectory: &BackgroundTrajectory<N>,
         triangle: MomentumTriangle,
         slices: &[f64],
         output_e_folds: f64,
         settings: &SplitSettings,
-    ) -> Result<Vec<CurvatureCorrelators>, SplitError> {
+    ) -> Result<Vec<CurvatureResponse>, SplitError> {
         if !(settings.response_step > 0.0 && settings.response_step.is_finite()) {
             return Err(SplitError::InvalidSettings(
                 "response_step must be positive and finite",
-            ));
-        }
-        if !(settings.relative_tolerance > 0.0 && settings.relative_tolerance < 1.0) {
-            return Err(SplitError::InvalidSettings(
-                "relative_tolerance must lie in (0, 1)",
             ));
         }
         if slices
@@ -421,6 +417,39 @@ where
             responses[index] = Some(response.clone());
         }
 
+        Ok(responses
+            .into_iter()
+            .map(|response| response.expect("every slice has a response"))
+            .collect())
+    }
+
+    /// `P_zeta` and `B_zeta` of `triangle` on the output slice
+    /// `output_e_folds`, split at each slice of `slices` (elapsed e-folds,
+    /// superhorizon and before `output_e_folds`): the transport up to the
+    /// slice, then the backward response from the output slice. Results come
+    /// in the order of `slices`. `bispectrum_imaginary_ratio` is zero; only
+    /// the real parts on the slice enter.
+    ///
+    /// The slices must lie before any large transient growth of the
+    /// correlators, or the cancellation stays inside the contraction.
+    pub fn split_curvature_correlators(
+        &self,
+        trajectory: &BackgroundTrajectory<N>,
+        triangle: MomentumTriangle,
+        slices: &[f64],
+        output_e_folds: f64,
+        settings: &SplitSettings,
+    ) -> Result<Vec<CurvatureCorrelators>, SplitError> {
+        if !(settings.relative_tolerance > 0.0 && settings.relative_tolerance < 1.0) {
+            return Err(SplitError::InvalidSettings(
+                "relative_tolerance must lie in (0, 1)",
+            ));
+        }
+        let responses =
+            self.curvature_response(trajectory, triangle, slices, output_e_folds, settings)?;
+        let mut order: Vec<usize> = (0..slices.len()).collect();
+        order.sort_by(|&x, &y| slices[y].total_cmp(&slices[x]));
+
         // Forwards with the transport, earliest slice first.
         let mut evolution =
             ThreePointEvolution::start(self, trajectory, triangle, settings.e_folds_before_exit)
@@ -439,10 +468,7 @@ where
                     settings.max_steps,
                 )
                 .map_err(SplitError::Transport)?;
-            let response = responses[index]
-                .as_ref()
-                .expect("every slice has a response");
-            results[index] = Some(combine(response, &evolution.state, triangle));
+            results[index] = Some(combine(&responses[index], &evolution.state, triangle));
         }
         Ok(results
             .into_iter()

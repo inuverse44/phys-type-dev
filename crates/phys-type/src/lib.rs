@@ -95,7 +95,7 @@ pub use spectrum_run::{
     ModeEvolutionRecord, ModeSpectrum, Pivot, SpectrumRecord, SpectrumRun, SpectrumRunError,
     SpectrumRunSettings, SpectrumRunStage, write_metadata,
 };
-pub use split::{SplitError, SplitSettings};
+pub use split::{CurvatureResponse, SplitError, SplitSettings};
 pub use state::{State, StateDelta, StateDerivative};
 pub use theory::{
     EinsteinFrame, EinsteinGeometry, EinsteinMetric, EinsteinPotential, Formulation,

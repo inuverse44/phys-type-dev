@@ -16,6 +16,10 @@
 //!   backwards from `target` with RK4 steps of at most `step` e-folds,
 //!   combined with the transport (tolerance `tol`) up to each slice `n_c`.
 //!   This calls `CovariantMultifieldSystem::split_curvature_correlators`.
+//! - `gap <index> <target> <delta,...>`: the gap between the transport and
+//!   the crossing-time delta N of KMS Sec. V, one ingredient at a time. The
+//!   slices are `delta` e-folds after the pivot crosses the horizon, and
+//!   `target` is the output surface of uniform `H`.
 //! - `noise <index> <n_c> <target>`: `N` along `chi` from `n_c`, to the `H`
 //!   surface and to `epsilon_H = 1`, to measure the noise of the endpoint.
 //!
@@ -30,15 +34,17 @@
 //! ```
 
 use phys_type::{
-    BackgroundNeighborhood, BackgroundTrajectory, CanonicalThreePointTransportState,
-    CanonicalThreePointTransportSystem, CanonicalThreePointTransportTolerance,
-    ConformalPerturbationTolerance, Dimensionless, ErrorTolerances, Field, FieldSpaceGeometry,
-    FieldVelocity, Formulation, MomentumTriangle, MultifieldState, ScaleFactor,
-    SpectrumRunSettings, SplitSettings, StepSizeLimits, adaptive_step,
-    canonical_three_point_transport_initial_state, curvature_correlators, next_step_size,
-    velocity_three_point_from_transport_state,
+    BackgroundNeighborhood, BackgroundSurvey, BackgroundTrajectory,
+    CanonicalThreePointTransportState, CanonicalThreePointTransportSystem,
+    CanonicalThreePointTransportTolerance, ConformalPerturbationTolerance, CurvatureResponse,
+    Dimensionless, ErrorTolerances, Field, FieldSpaceGeometry, FieldVelocity, Formulation,
+    MomentumTriangle, MultifieldState, ScaleFactor, SpectrumRunSettings, SplitSettings,
+    StepSizeLimits, adaptive_step, canonical_three_point_transport_initial_state,
+    curvature_correlators, next_step_size, velocity_three_point_from_transport_state,
 };
-use phys_type_models::kms::{KmsSystem, PHI_START, TRAJECTORIES, at_rest, benchmark_system};
+use phys_type_models::kms::{
+    KmsSystem, PHI_START, TRAJECTORIES, at_rest, benchmark_system, crossing_delta_n,
+};
 
 struct Transport<'a> {
     system: &'a KmsSystem,
@@ -308,6 +314,91 @@ fn phase_space_delta_n(
     )
 }
 
+/// The delta N of KMS Sec. V from the fields `x0` with slow-roll velocities:
+/// (f_NL, N_a N^a), with `N` read off each survey by `end`.
+fn slow_roll_delta_n(
+    system: &KmsSystem,
+    x0: [f64; 2],
+    settings: &SpectrumRunSettings,
+    end: impl Fn(&BackgroundSurvey<2>) -> f64,
+) -> (f64, f64) {
+    // KMS_FD_STEP overrides the relative step `3e-4` of `crossing_delta_n`.
+    let step = std::env::var("KMS_FD_STEP").map_or(3.0e-4, |value| value.parse().unwrap());
+    let h = [step * x0[0].abs(), step * x0[1].abs()];
+    let e_folds = |a: f64, b: f64| {
+        let rest = at_rest(x0[0] + a * h[0], x0[1] + b * h[1]);
+        let state = MultifieldState {
+            pi: system.slow_roll_velocity(&rest),
+            ..rest
+        };
+        end(&system.survey(state, settings).unwrap())
+    };
+    let centre = e_folds(0.0, 0.0);
+    let axis = [
+        [e_folds(1.0, 0.0), e_folds(-1.0, 0.0)],
+        [e_folds(0.0, 1.0), e_folds(0.0, -1.0)],
+    ];
+    let mixed = (e_folds(1.0, 1.0) - e_folds(1.0, -1.0) - e_folds(-1.0, 1.0) + e_folds(-1.0, -1.0))
+        / (4.0 * h[0] * h[1]);
+    let first: [f64; 2] = core::array::from_fn(|a| (axis[a][0] - axis[a][1]) / (2.0 * h[a]));
+    let mut second = [[mixed; 2]; 2];
+    for a in 0..2 {
+        second[a][a] = (axis[a][0] - 2.0 * centre + axis[a][1]) / (h[a] * h[a]);
+    }
+    let position = [Field::new(x0[0]), Field::new(x0[1])];
+    let connection = system.geometry.christoffel(&position);
+    let inverse = system.geometry.inverse_metric(&position);
+    let raised: [f64; 2] = core::array::from_fn(|a| {
+        (0..2)
+            .map(|b| inverse.components()[a][b].into_value() * first[b])
+            .sum()
+    });
+    let norm: f64 = (0..2).map(|a| raised[a] * first[a]).sum();
+    let curvature: f64 = (0..4)
+        .map(|m| {
+            let [a, b] = [m / 2, m % 2];
+            let covariant = second[a][b]
+                - (0..2)
+                    .map(|c| connection.components()[c][a][b].value() * first[c])
+                    .sum::<f64>();
+            raised[a] * raised[b] * covariant
+        })
+        .sum();
+    (5.0 / 6.0 * curvature / (norm * norm), norm)
+}
+
+/// The response contracted with a covariance and a three-point function on
+/// the phase space, equal legs: (f_NL, P up to a common factor, intrinsic
+/// part of f_NL). `keep(a)` masks the phase-space directions.
+fn contract(
+    response: &CurvatureResponse,
+    sigma: &dyn Fn(usize, usize) -> f64,
+    alpha: &dyn Fn(usize, usize, usize) -> f64,
+    keep: &dyn Fn(usize) -> bool,
+) -> (f64, f64, f64) {
+    let n: Vec<f64> = (0..4)
+        .map(|a| if keep(a) { response.linear[0][a] } else { 0.0 })
+        .collect();
+    let power: f64 = (0..16)
+        .map(|m| n[m / 4] * n[m % 4] * sigma(m / 4, m % 4))
+        .sum();
+    let projected: Vec<f64> = (0..4)
+        .map(|a| (0..4).map(|c| n[c] * sigma(c, a)).sum())
+        .collect();
+    let gauge: f64 = (0..3)
+        .map(|r| {
+            (0..16)
+                .map(|m| response.quadratic[r][m] * projected[m / 4] * projected[m % 4])
+                .sum::<f64>()
+        })
+        .sum();
+    let intrinsic: f64 = (0..64)
+        .map(|m| n[m / 16] * n[(m / 4) % 4] * n[m % 4] * alpha(m / 16, (m / 4) % 4, m % 4))
+        .sum();
+    let f = |b: f64| 5.0 / 6.0 * b / (3.0 * power * power);
+    (f(gauge + intrinsic), power, f(intrinsic))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args[1].as_str();
@@ -411,6 +502,130 @@ fn main() {
             transport.advance(target);
             let (f_nl, p) = transport.f_nl();
             println!("transport,{f_nl:.8e},{p:.8e}");
+        }
+        "gap" => {
+            // From the crossing-time delta N of KMS Sec. V to the split, one
+            // ingredient at a time. Needs KMS_BACKGROUND_TOLERANCE=1e-13.
+            let target_before: f64 = args[3].parse().unwrap();
+            let deltas = list(&args[4]);
+            let target = end - target_before;
+            let target_hubble = system.hubble(&trajectory.state_at(target)).into_value();
+            let precise = SpectrumRunSettings {
+                background_sample_every: usize::MAX,
+                ..settings
+            };
+            let star = end - 60.0;
+            let x0 = [pivot.phi[0].into_value(), pivot.phi[1].into_value()];
+
+            // 1. KMS: slow-roll velocities, N to epsilon_H = 1.
+            let library = crossing_delta_n(&system, &survey, &settings, 60.0).unwrap();
+            let (kms, _) = slow_roll_delta_n(&system, x0, &precise, |run| run.e_folds_at_end);
+            // 2. The same with N to the surface of uniform H through the end
+            // of the reference trajectory (0.001 e-folds before it; perturbed
+            // trajectories that end earlier never reach the end value), and
+            // through `target`.
+            let to_hubble = |hubble: f64| {
+                slow_roll_delta_n(&system, x0, &precise, |run| {
+                    run.trajectory
+                        .crossing(|st| system.hubble(st).into_value() - hubble)
+                        .unwrap()
+                })
+                .0
+            };
+            let end_hubble = system
+                .hubble(&trajectory.state_at(end - 1.0e-3))
+                .into_value();
+            println!("step,f_nl");
+            println!("kms_library,{:.8e}", library.f_nl);
+            println!("slow_roll_to_epsilon_1,{kms:.8e}");
+            println!("slow_roll_to_uniform_h_0.001,{:.8e}", to_hubble(end_hubble));
+            println!("slow_roll_to_uniform_h,{:.8e}", to_hubble(target_hubble));
+
+            // Background at the crossing: slow-roll against the actual velocity.
+            let slow = system.slow_roll_velocity(&pivot);
+            let metric = system.geometry.metric(&pivot.phi);
+            let speed = |v: [f64; 2]| {
+                (0..4)
+                    .map(|m| metric.components()[m / 2][m % 2].into_value() * v[m / 2] * v[m % 2])
+                    .sum::<f64>()
+                    .sqrt()
+            };
+            let actual = pivot.pi.map(FieldVelocity::into_value);
+            let slow = slow.map(FieldVelocity::into_value);
+            let curvature =
+                phys_type_models::kms::KmsTheory::benchmark(1.0e-2, Formulation::Metric)
+                    .gaussian_curvature(x0[0], x0[1]);
+            println!(
+                "# crossing: K {curvature:.6e}, epsilon_H {:.6e}, |pi| {:.8e}, slow-roll |pi| {:.8e}, angle {:.3e}",
+                system.epsilon_h(&pivot),
+                speed(actual),
+                speed(slow),
+                (actual[1].atan2(actual[0]) - slow[1].atan2(slow[0])),
+            );
+
+            // 3. The exact response of zeta on the H surface, far outside the
+            // horizon (k -> 0), with massless statistics on each slice.
+            let slices: Vec<f64> = deltas.iter().map(|delta| star + delta).collect();
+            let split = SplitSettings {
+                response_step: 1.25e-4,
+                ..SplitSettings::default()
+            };
+            let tiny = MomentumTriangle::try_new(1.0e-6 * k, 1.0e-6 * k, 1.0e-6 * k).unwrap();
+            let separate = system
+                .curvature_response(trajectory, tiny, &slices, target, &split)
+                .unwrap();
+            let none = |_: usize, _: usize, _: usize| 0.0;
+            let fields = |a: usize| a < 2;
+            for (delta, (slice, response)) in deltas.iter().zip(slices.iter().zip(&separate)) {
+                let inverse = system
+                    .geometry
+                    .inverse_metric(&trajectory.state_at(*slice).phi);
+                let massless = |a: usize, b: usize| {
+                    if a < 2 && b < 2 {
+                        inverse.components()[a][b].into_value()
+                    } else {
+                        0.0
+                    }
+                };
+                let (f_nl, _, _) = contract(response, &massless, &none, &fields);
+                println!("massless_at_exit_plus_{delta},{f_nl:.8e}");
+            }
+
+            // 4. The transport up to each slice, with the response of the
+            // pivot itself: fields only, with momenta, with the intrinsic part.
+            let triangle = MomentumTriangle::try_new(k, k, k).unwrap();
+            let responses = system
+                .curvature_response(trajectory, triangle, &slices, target, &split)
+                .unwrap();
+            let mut transport = Transport::new(&system, trajectory, k, 1.0e-12);
+            for (delta, (slice, response)) in deltas.iter().zip(slices.iter().zip(&responses)) {
+                transport.advance(*slice);
+                let state = &transport.state;
+                let sigma = |a: usize, b: usize| covariance_entry(&state.covariances[0], a, b);
+                let alpha = |a: usize, b: usize, c: usize| {
+                    let (i, j, l) = (a % 2, b % 2, c % 2);
+                    let block = &state.alpha;
+                    match (a < 2, b < 2, c < 2) {
+                        (true, true, true) => block.qqq.components()[i][j][l].value().re,
+                        (true, true, false) => block.qqp.components()[i][j][l].value().re,
+                        (true, false, true) => block.qpq.components()[i][j][l].value().re,
+                        (false, true, true) => block.pqq.components()[i][j][l].value().re,
+                        (true, false, false) => block.qpp.components()[i][j][l].value().re,
+                        (false, true, false) => block.pqp.components()[i][j][l].value().re,
+                        (false, false, true) => block.ppq.components()[i][j][l].value().re,
+                        (false, false, false) => block.ppp.components()[i][j][l].value().re,
+                    }
+                };
+                let all = |_: usize| true;
+                let (q_only, _, _) = contract(response, &sigma, &none, &fields);
+                let (gaussian, _, _) = contract(response, &sigma, &none, &all);
+                let (full, _, intrinsic) = contract(response, &sigma, &alpha, &all);
+                println!("transport_fields_at_exit_plus_{delta},{q_only:.8e}");
+                println!("transport_gaussian_at_exit_plus_{delta},{gaussian:.8e}");
+                println!(
+                    "transport_full_at_exit_plus_{delta},{full:.8e},intrinsic {intrinsic:.8e}"
+                );
+            }
         }
         "noise" => {
             // N along chi from the slice `n_c`, to the H surface and to epsilon_H = 1.
