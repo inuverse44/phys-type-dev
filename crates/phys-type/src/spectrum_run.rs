@@ -74,6 +74,11 @@ pub struct SpectrumRunSettings {
     pub max_e_folds: f64,
     /// The event that ends inflation; `epsilon_H = 1` by default.
     pub end_of_inflation: EndOfInflation,
+    /// The background survey continues this many e-folds past the end of
+    /// inflation, so that `zeta` can be followed after it; zero by default.
+    /// The end of inflation, and every time measured from it, stays at the
+    /// event.
+    pub e_folds_after_end: f64,
     /// How many e-folds before its own horizon exit each mode is initialized.
     ///
     /// This is the readable form of the depth `x_init = k/(aH)`, which is its
@@ -113,6 +118,7 @@ impl Default for SpectrumRunSettings {
             max_steps: 1_000_000,
             max_e_folds: 120.0,
             end_of_inflation: EndOfInflation::SlowRollViolation,
+            e_folds_after_end: 0.0,
             e_folds_before_exit: 5.0,
             pivot_e_folds_before_end: 55.0,
             output_e_folds_before_end: 5.0,
@@ -1295,15 +1301,30 @@ where
                 Some((field, value, side))
             }
         };
-        let (final_state, _) = advance_until(
+        let tolerances = background_tolerances::<N>(settings);
+        let control = || AdvanceControl {
+            settings,
+            tolerances: &tolerances,
+            stage: SpectrumRunStage::BackgroundSurvey,
+        };
+        let mut record = |state: &MultifieldState<N>| {
+            accepted += 1;
+            checkpoints.push(self.background_checkpoint(&initial, state));
+            if domain_error.is_none()
+                && let Err(error) = self.geometry.check_domain(&state.phi)
+            {
+                domain_error = Some(SpectrumRunError::OutsideGeometryDomain {
+                    e_folds: state.e_folds(&initial),
+                    error,
+                });
+            }
+            on_accepted(state, accepted);
+        };
+        let (final_state, time) = advance_until(
             self,
             initial,
             Time::new(0.0),
-            AdvanceControl {
-                settings,
-                tolerances: &background_tolerances::<N>(settings),
-                stage: SpectrumRunStage::BackgroundSurvey,
-            },
+            control(),
             |state| {
                 let remaining = settings.max_e_folds - state.e_folds(&initial);
                 let inflating = 1.0 - self.epsilon_h(state);
@@ -1314,24 +1335,8 @@ where
 
                 remaining.min(inflating).min(before_field_event)
             },
-            |state, _| {
-                accepted += 1;
-                checkpoints.push(self.background_checkpoint(&initial, state));
-                if domain_error.is_none()
-                    && let Err(error) = self.geometry.check_domain(&state.phi)
-                {
-                    domain_error = Some(SpectrumRunError::OutsideGeometryDomain {
-                        e_folds: state.e_folds(&initial),
-                        error,
-                    });
-                }
-                on_accepted(state, accepted);
-            },
+            |state, _| record(state),
         )?;
-
-        if let Some(error) = domain_error {
-            return Err(error);
-        }
 
         let e_folds = final_state.e_folds(&initial);
         let ended = match field_event {
@@ -1351,7 +1356,24 @@ where
         if !ended {
             return Err(SpectrumRunError::InflationDidNotEnd { e_folds });
         }
+        let final_state = if settings.e_folds_after_end > 0.0 {
+            let stop = e_folds + settings.e_folds_after_end;
+            advance_until(
+                self,
+                final_state,
+                time,
+                control(),
+                |state| stop - state.e_folds(&initial),
+                |state, _| record(state),
+            )?
+            .0
+        } else {
+            final_state
+        };
 
+        if let Some(error) = domain_error {
+            return Err(error);
+        }
         Ok((
             BackgroundTrajectory {
                 initial,
@@ -2246,6 +2268,11 @@ pub(crate) fn validate(settings: &SpectrumRunSettings) -> Result<(), SpectrumRun
             "the mode start must be finite and before horizon exit",
         ));
     }
+    if !settings.e_folds_after_end.is_finite() || settings.e_folds_after_end < 0.0 {
+        return Err(SpectrumRunError::InvalidSettings(
+            "e_folds_after_end must be finite and non-negative",
+        ));
+    }
     if !settings.pivot_e_folds_before_end.is_finite()
         || settings.pivot_e_folds_before_end < 0.0
         || !settings.output_e_folds_before_end.is_finite()
@@ -2679,6 +2706,43 @@ mod tests {
         let last = run.background.last().unwrap();
         assert!((last.epsilon_h - 1.0).abs() < 1.0e-6);
         assert!((last.e_folds - run.pivot.e_folds_at_end).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn the_survey_continues_past_the_end_when_asked() {
+        let system = system([1.0e-6, 1.5e-6]);
+        let initial = slow_roll_start(&system, [12.0, 8.0]);
+        let ending = system.survey(initial, &quick_settings()).unwrap();
+        let continued = system
+            .survey(
+                initial,
+                &SpectrumRunSettings {
+                    e_folds_after_end: 0.5,
+                    ..quick_settings()
+                },
+            )
+            .unwrap();
+
+        // The end stays at the event; the trajectory runs 0.5 e-folds past it.
+        assert!((continued.e_folds_at_end - ending.e_folds_at_end).abs() < 1.0e-12);
+        let last = continued.trajectory.checkpoint_e_folds().last().unwrap();
+        assert!((last - continued.e_folds_at_end - 0.5).abs() < 1.0e-9);
+        let after = continued
+            .trajectory
+            .state_at(continued.e_folds_at_end + 0.25);
+        assert!(system.epsilon_h(&after) > 1.0);
+
+        let negative = system.survey(
+            initial,
+            &SpectrumRunSettings {
+                e_folds_after_end: -1.0,
+                ..quick_settings()
+            },
+        );
+        assert!(matches!(
+            negative,
+            Err(SpectrumRunError::InvalidSettings(_))
+        ));
     }
 
     #[test]

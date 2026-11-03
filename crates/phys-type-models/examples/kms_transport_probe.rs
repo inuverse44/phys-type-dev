@@ -20,6 +20,21 @@
 //!   the crossing-time delta N of KMS Sec. V, one ingredient at a time. The
 //!   slices are `delta` e-folds after the pivot crosses the horizon, and
 //!   `target` is the output surface of uniform `H`.
+//! - `after <index> <after> <t,...>`: the split from slices 20 and 10
+//!   e-folds before the end, read off `t` e-folds after the end of inflation
+//!   (negative before it), with the background continued `after` e-folds
+//!   past the end.
+//! - `masses <index> <after> <t0> <t1> <dt>`: the mass of the isocurvature
+//!   direction in units of `H^2` from `t0` to `t1` e-folds after the end:
+//!   the potential, the Riemann term, and the turn.
+//! - `orbit <index> <after> <t0> <t1> <dt> [<t_s> <scale>]`: the background
+//!   from `t0` to `t1` e-folds after the end. With `t_s` and `scale`, the
+//!   background restarts at `t_s` e-folds after the end with `phi` and its
+//!   velocity multiplied by `scale`, and `t` counts from the same end.
+//! - `floquet <index> <xi_scale> <A,...>`: without expansion, the growth of
+//!   a small `phi` per half period of `chi` oscillating with amplitude `A`
+//!   (Floquet). `xi_scale` multiplies both nonminimal couplings; 0 is the
+//!   canonical limit. `<index>` is not used.
 //! - `noise <index> <n_c> <target>`: `N` along `chi` from `n_c`, to the `H`
 //!   surface and to `epsilon_H = 1`, to measure the noise of the endpoint.
 //!
@@ -399,6 +414,89 @@ fn contract(
     (f(gauge + intrinsic), power, f(intrinsic))
 }
 
+/// `d/dt (phi^I, phidot^I)` without expansion: the geodesic equation with
+/// the force of the potential, in Planck units.
+fn flat_rate(system: &KmsSystem, y: [f64; 4]) -> [f64; 4] {
+    let position = [Field::new(y[0]), Field::new(y[1])];
+    let connection = system.geometry.christoffel(&position);
+    let inverse = system.geometry.inverse_metric(&position);
+    let gradient = phys_type::MultifieldPotential::gradient(&system.potential, position);
+    let mut out = [y[2], y[3], 0.0, 0.0];
+    for i in 0..2 {
+        let geodesic: f64 = (0..4)
+            .map(|m| connection.components()[i][m / 2][m % 2].value() * y[2 + m / 2] * y[2 + m % 2])
+            .sum();
+        let force: f64 = (0..2)
+            .map(|j| inverse.components()[i][j].into_value() * gradient[j].into_value())
+            .sum();
+        out[2 + i] = -geodesic - force;
+    }
+    out
+}
+
+/// RK4 from `y` over `time` in `steps` equal steps.
+fn flat_evolve(system: &KmsSystem, mut y: [f64; 4], time: f64, steps: usize) -> [f64; 4] {
+    let h = time / steps as f64;
+    let add = |y: [f64; 4], k: [f64; 4], c: f64| -> [f64; 4] {
+        core::array::from_fn(|i| y[i] + c * k[i])
+    };
+    for _ in 0..steps {
+        let k1 = flat_rate(system, y);
+        let k2 = flat_rate(system, add(y, k1, 0.5 * h));
+        let k3 = flat_rate(system, add(y, k2, 0.5 * h));
+        let k4 = flat_rate(system, add(y, k3, h));
+        y = core::array::from_fn(|i| y[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]));
+    }
+    y
+}
+
+/// (period of chi, growth of phi per half period) at chi amplitude `A`.
+fn floquet(system: &KmsSystem, amplitude: f64, steps: usize) -> (f64, f64) {
+    let start = [0.0, amplitude, 0.0, 0.0];
+    // Bracket the return to the apex (chidot from + to -), then secant.
+    let scale = 1.0 / (0.005_f64.sqrt() * amplitude);
+    let dt = scale / 2000.0;
+    let (mut y, mut t, mut previous) = (start, 0.0, 0.0);
+    loop {
+        y = flat_evolve(system, y, dt, 1);
+        t += dt;
+        if previous > 0.0 && y[3] <= 0.0 {
+            break;
+        }
+        previous = y[3];
+    }
+    let speed_at = |time: f64| flat_evolve(system, start, time, steps)[3];
+    let (mut a, mut b) = (t - dt, t);
+    let (mut fa, mut fb) = (speed_at(a), speed_at(b));
+    for _ in 0..30 {
+        let c = b - fb * (b - a) / (fb - fa);
+        let fc = speed_at(c);
+        (a, fa, b, fb) = (b, fb, c, fc);
+        if (b - a).abs() < 1.0e-13 * b {
+            break;
+        }
+    }
+    let period = b;
+    let seed = 1.0e-10;
+    let unit = 0.005_f64.sqrt() * amplitude;
+    let q = flat_evolve(system, [seed, amplitude, 0.0, 0.0], period, steps);
+    let p = flat_evolve(system, [0.0, amplitude, seed * unit, 0.0], period, steps);
+    // Monodromy on (phi, phidot / unit).
+    let m = [
+        [q[0] / seed, p[0] / seed],
+        [q[2] / (seed * unit), p[2] / (seed * unit)],
+    ];
+    let trace = m[0][0] + m[1][1];
+    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    let disc = trace * trace - 4.0 * det;
+    let largest = if disc >= 0.0 {
+        (0.5 * (trace.abs() + disc.sqrt())).abs()
+    } else {
+        det.abs().sqrt()
+    };
+    (period, largest.sqrt())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args[1].as_str();
@@ -419,6 +517,14 @@ fn main() {
             background_tolerance,
         ),
         ..SpectrumRunSettings::default()
+    };
+    let settings = if mode == "after" || mode == "masses" || mode == "orbit" {
+        SpectrumRunSettings {
+            e_folds_after_end: args[3].parse().unwrap(),
+            ..settings
+        }
+    } else {
+        settings
     };
     let survey = system
         .survey(at_rest(PHI_START, TRAJECTORIES[index]), &settings)
@@ -625,6 +731,158 @@ fn main() {
                 println!(
                     "transport_full_at_exit_plus_{delta},{full:.8e},intrinsic {intrinsic:.8e}"
                 );
+            }
+        }
+        "after" => {
+            // f_NL read off after the end of inflation. Needs
+            // KMS_BACKGROUND_TOLERANCE=1e-13.
+            let triangle = MomentumTriangle::try_new(k, k, k).unwrap();
+            // KMS_RESPONSE_STEP overrides the RK4 step of the response.
+            let split = SplitSettings {
+                response_step: std::env::var("KMS_RESPONSE_STEP")
+                    .map_or(2.5e-4, |value| value.parse().unwrap()),
+                ..SplitSettings::default()
+            };
+            println!("t,epsilon_h,f_nl_20,f_nl_10,p_zeta");
+            for t in list(&args[4]) {
+                let output = end + t;
+                let results = system
+                    .split_curvature_correlators(
+                        trajectory,
+                        triangle,
+                        &[end - 20.0, end - 10.0],
+                        output,
+                        &split,
+                    )
+                    .unwrap();
+                println!(
+                    "{t},{:.6e},{:.8e},{:.8e},{:.8e}",
+                    system.epsilon_h(&trajectory.state_at(output)),
+                    results[0].reduced_f_nl(),
+                    results[1].reduced_f_nl(),
+                    results[0].dimensionless_power()[0]
+                );
+            }
+        }
+        "masses" => {
+            // C^I_J projected on the unit isocurvature direction e_s, split
+            // into the covariant Hessian of the potential and the Riemann
+            // term, with the turn eta_perp^2 that enters the superhorizon
+            // isocurvature mass mu_s^2 = C_ss - omega^2.
+            let (t0, t1, dt): (f64, f64, f64) = (
+                args[4].parse().unwrap(),
+                args[5].parse().unwrap(),
+                args[6].parse().unwrap(),
+            );
+            let theory = phys_type_models::kms::KmsTheory::benchmark(1.0e-2, Formulation::Metric);
+            println!("t,epsilon_h,K,hessian_ss,riemann_ss,eta_perp2,mu_s2,phi,chi");
+            let count = ((t1 - t0) / dt).round() as usize;
+            for step in 0..=count {
+                let t = t0 + dt * step as f64;
+                let state = trajectory.state_at(end + t);
+                let Ok(kinematics) = system.kinematics(&state) else {
+                    continue;
+                };
+                let metric = system.geometry.metric(&state.phi);
+                let g = |i: usize, j: usize| metric.components()[i][j].into_value();
+                let e: [f64; 2] =
+                    core::array::from_fn(|i| kinematics.tangent.components()[i].into_value());
+                // e_s: rotate e_sigma by 90 degrees in the metric.
+                let lowered: [f64; 2] =
+                    core::array::from_fn(|i| (0..2).map(|j| g(i, j) * e[j]).sum());
+                let det = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
+                let es = [-lowered[1] / det.sqrt(), lowered[0] / det.sqrt()];
+                let es_low: [f64; 2] =
+                    core::array::from_fn(|i| (0..2).map(|j| g(i, j) * es[j]).sum());
+                let hubble2 = system.hubble(&state).into_value().powi(2);
+                let hessian = system.covariant_potential_hessian(&state);
+                let hessian_ss: f64 = (0..4)
+                    .map(|m| es[m / 2] * es[m % 2] * hessian.components()[m / 2][m % 2].value())
+                    .sum::<f64>()
+                    / hubble2;
+                let total = system.perturbation_mass_matrix(&state);
+                let total_ss: f64 = (0..4)
+                    .map(|m| es_low[m / 2] * total.components()[m / 2][m % 2].value() * es[m % 2])
+                    .sum::<f64>()
+                    / hubble2;
+                // The gravitational part of C is proportional to the velocity
+                // on its right, so it drops out along e_s.
+                let riemann_ss = total_ss - hessian_ss;
+                let eta2 = kinematics.eta_perp.into_value().powi(2);
+                let [phi, chi] = state.phi.map(|f| f.into_value());
+                println!(
+                    "{t:.4},{:.4e},{:.4e},{hessian_ss:.4e},{riemann_ss:.4e},{eta2:.4e},{:.4e},{phi:.4e},{chi:.4e}",
+                    system.epsilon_h(&state),
+                    theory.gaussian_curvature(phi, chi),
+                    total_ss - eta2,
+                );
+            }
+        }
+        "orbit" => {
+            let (t0, t1, dt): (f64, f64, f64) = (
+                args[4].parse().unwrap(),
+                args[5].parse().unwrap(),
+                args[6].parse().unwrap(),
+            );
+            let after: f64 = args[3].parse().unwrap();
+            let restarted = args.get(7).map(|t_s| {
+                let t_s: f64 = t_s.parse().unwrap();
+                let scale: f64 = args[8].parse().unwrap();
+                let mut start = trajectory.state_at(end + t_s);
+                start.phi[0] = Field::new(scale * start.phi[0].into_value());
+                start.pi[0] = FieldVelocity::new(scale * start.pi[0].into_value());
+                start.a = ScaleFactor::new(1.0);
+                // Inflation has ended; the survey stops at once (epsilon_H
+                // > 1) or within a few steps, then continues.
+                let run = system
+                    .survey(
+                        start,
+                        &SpectrumRunSettings {
+                            e_folds_after_end: after - t_s,
+                            ..settings
+                        },
+                    )
+                    .unwrap();
+                (run, t_s)
+            });
+            println!("t,phi,chi,pi_phi,pi_chi,epsilon_h,hubble");
+            let count = ((t1 - t0) / dt).round() as usize;
+            for step in 0..=count {
+                let t = t0 + dt * step as f64;
+                let state = match &restarted {
+                    None => trajectory.state_at(end + t),
+                    Some((run, t_s)) => {
+                        if t < *t_s {
+                            continue;
+                        }
+                        run.trajectory.state_at(t - t_s)
+                    }
+                };
+                let [phi, chi] = state.phi.map(|f| f.into_value());
+                let [pi_phi, pi_chi] = state.pi.map(|v| v.into_value());
+                println!(
+                    "{t:.5},{phi:.6e},{chi:.6e},{pi_phi:.6e},{pi_chi:.6e},{:.6e},{:.6e}",
+                    system.epsilon_h(&state),
+                    system.hubble(&state).into_value()
+                );
+            }
+        }
+        "floquet" => {
+            let xi_scale: f64 = args[3].parse().unwrap();
+            let base = phys_type_models::kms::KmsTheory::benchmark(1.0e-2, Formulation::Metric);
+            let theory = phys_type_models::kms::KmsTheory {
+                xi_phi: xi_scale * base.xi_phi,
+                xi_chi: xi_scale * base.xi_chi,
+                ..base
+            };
+            let (potential, geometry) = phys_type::einstein_frame(theory);
+            let scaled = phys_type::CovariantMultifieldSystem::in_planck_units(potential, geometry);
+            // KMS_FLOQUET_STEPS sets the RK4 steps per period.
+            let steps = std::env::var("KMS_FLOQUET_STEPS").map_or(20_000, |v| v.parse().unwrap());
+            println!("amplitude,period,growth_per_half_period");
+            for amplitude in list(&args[4]) {
+                let (period, growth) = floquet(&scaled, amplitude, steps);
+                println!("{amplitude},{period:.8e},{growth:.6}");
             }
         }
         "noise" => {
