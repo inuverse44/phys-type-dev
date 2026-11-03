@@ -13,6 +13,14 @@ Branch from the latest `main`. Keep commits focused, push the feature branch,
 and merge only after the checks below pass. Prefer fast-forward integration for
 local linear work; use a reviewed pull request when collaborating.
 
+When a pull request is stacked on another branch, merge the lower one without
+deleting its branch, retarget the upper one to `main`, and only then delete
+the lower branch. Deleting a base branch closes the pull requests on top of it
+instead of retargeting them.
+
+After resolving conflicts in a rebase or merge, run `cargo build` (and check
+the diff of the resolved files) before continuing.
+
 ## Layout
 
 The workspace has two crates. `crates/phys-type` is the core: the type
