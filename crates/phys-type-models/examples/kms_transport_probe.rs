@@ -20,6 +20,10 @@
 //!   the crossing-time delta N of KMS Sec. V, one ingredient at a time. The
 //!   slices are `delta` e-folds after the pivot crosses the horizon, and
 //!   `target` is the output surface of uniform `H`.
+//! - `spectra <index> <before,...>`: P_R, P_S, and n_s of the pivot read off
+//!   `before` e-folds before the end (G3), then the slow-roll n_s(t_*) of
+//!   KMS Eq. (85) and T_RS from t_* by KMS Eqs. (70), (72), and (77).
+//!   `KMS_TILT_STEP` sets the step in ln k of the central difference.
 //! - `after <index> <after> <t,...>`: the split from slices 20 and 10
 //!   e-folds before the end, read off `t` e-folds after the end of inflation
 //!   (negative before it), with the background continued `after` e-folds
@@ -52,13 +56,14 @@ use phys_type::{
     BackgroundNeighborhood, BackgroundSurvey, BackgroundTrajectory,
     CanonicalThreePointTransportState, CanonicalThreePointTransportSystem,
     CanonicalThreePointTransportTolerance, ConformalPerturbationTolerance, CurvatureResponse,
-    Dimensionless, ErrorTolerances, Field, FieldSpaceGeometry, FieldVelocity, Formulation,
+    Dimensionless, ErrorTolerances, Field, FieldSpaceGeometry, FieldVelocity, Formulation, Mass,
     MomentumTriangle, MultifieldState, ScaleFactor, SpectrumRunSettings, SplitSettings,
     StepSizeLimits, adaptive_step, canonical_three_point_transport_initial_state,
     curvature_correlators, next_step_size, velocity_three_point_from_transport_state,
 };
 use phys_type_models::kms::{
     KmsSystem, PHI_START, TRAJECTORIES, at_rest, benchmark_system, crossing_delta_n,
+    slow_roll_tilt, transfer_functions,
 };
 
 struct Transport<'a> {
@@ -508,7 +513,9 @@ fn main() {
         std::env::var("KMS_BACKGROUND_TOLERANCE").map_or(1.0e-10, |value| value.parse().unwrap());
     let settings = SpectrumRunSettings {
         pivot_e_folds_before_end: 60.0,
-        e_folds_before_exit: 6.0,
+        // KMS_EXIT_DEPTH overrides how many e-folds before horizon exit the
+        // modes start in the Bunch-Davies vacuum.
+        e_folds_before_exit: std::env::var("KMS_EXIT_DEPTH").map_or(6.0, |v| v.parse().unwrap()),
         background_sample_every: 1,
         tolerances: ErrorTolerances::new(
             ConformalPerturbationTolerance::<2>::background_in_planck_units(
@@ -914,6 +921,46 @@ fn main() {
                     .crossing(|st| system.hubble(st).into_value() - target_hubble)
                     .unwrap();
                 println!("{t},{n_h:.15e},{:.15e}", run.e_folds_at_end);
+            }
+        }
+        "spectra" => {
+            // G3: P_R and n_s of the pivot (N_* = 60) read off on each slice,
+            // n_s from a central difference in ln k; then the slow-roll n_s(t_*)
+            // of KMS Eq. (85) and T_RS from t_* to `before` by KMS Eqs. (70),
+            // (72), and (77) on the exact background.
+            let step: f64 = std::env::var("KMS_TILT_STEP").map_or(0.02, |v| v.parse().unwrap());
+            println!("before_end,p_r,p_s,correlation,n_s");
+            for before in list(&args[3]) {
+                let output = end - before;
+                let spectra = |kk: f64| {
+                    system
+                        .mode_spectrum(&settings, trajectory, Mass::new(kk), output)
+                        .unwrap()
+                        .spectra
+                };
+                let (low, central, high) = (
+                    spectra(k * (-step).exp()),
+                    spectra(k),
+                    spectra(k * step.exp()),
+                );
+                let n_s = 1.0
+                    + (high.curvature.into_value() / low.curvature.into_value()).ln()
+                        / (2.0 * step);
+                println!(
+                    "{before},{:.8e},{:.8e},{:.6},{n_s:.6}",
+                    central.curvature.into_value(),
+                    central.entropy.into_value(),
+                    central.correlation.unwrap_or(f64::NAN),
+                );
+            }
+            let tilt = slow_roll_tilt(&system, &survey, 60.0).unwrap();
+            println!("# n_s(t_*) = 1 - 6 epsilon + 2 eta_sigma_sigma = {tilt:.6}");
+            let dn: f64 = std::env::var("KMS_TRS_STEP").map_or(1.0e-3, |v| v.parse().unwrap());
+            println!("# T_RS by KMS Eqs. (70), (72), (77)");
+            println!("before_end,t_rs,t_ss");
+            for before in list(&args[3]).into_iter().filter(|&b| b < 60.0) {
+                let (t_rs, t_ss) = transfer_functions(&system, &survey, 60.0, before, dn).unwrap();
+                println!("{before},{t_rs:.6e},{t_ss:.6e}");
             }
         }
         _ => panic!("unknown mode"),

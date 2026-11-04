@@ -25,8 +25,8 @@
 use phys_type::{
     BackgroundSurvey, CovariantMultifieldSystem, Dimensionless, EinsteinGeometry,
     EinsteinPotential, EnergyDensity, Field, FieldSpaceGeometry, FieldVelocity, Formulation,
-    GeneralizedNonminimal, MultifieldState, Quantity, ScaleFactor, SpectrumRunError,
-    SpectrumRunSettings, TheoryScalar, einstein_frame,
+    GeneralizedNonminimal, MultifieldPotentialValue, MultifieldState, Quantity, ScaleFactor,
+    SpectrumRunError, SpectrumRunSettings, TheoryScalar, einstein_frame,
 };
 
 /// The two-field model of KMS Eqs. (16)--(17), in reduced Planck units.
@@ -268,4 +268,105 @@ pub fn turn_peak(survey: &BackgroundSurvey<2>) -> Option<(f64, f64)> {
         .windows(3)
         .find(|w| w[1].0 > 0.1 && w[1].0 >= w[0].0 && w[1].0 >= w[2].0)
         .map(|w| w[1])
+}
+
+/// The slow-roll parameters of KMS Sec. IV at one state, in Planck units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlowRollParameters {
+    /// `epsilon_H = -Hdot / H^2`.
+    pub epsilon_h: f64,
+    /// `eta_sigma_sigma = M_sigma_sigma / V`, KMS Eq. (37). The Riemann term
+    /// of `M_IJ` is antisymmetric in the velocities and drops out.
+    pub eta_sigma_sigma: f64,
+    /// `eta_ss = M_ss / V`, KMS Eq. (76), with the Riemann term.
+    pub eta_ss: f64,
+    /// `eta_perp = |omega| / H`.
+    pub eta_perp: f64,
+}
+
+/// The slow-roll parameters at `state`, or `None` where the fields are at
+/// rest and the basis is undefined.
+pub fn slow_roll_parameters(
+    system: &KmsSystem,
+    state: &MultifieldState<2>,
+) -> Option<SlowRollParameters> {
+    let kinematics = system.kinematics(state).ok()?;
+    let metric = system.geometry.metric(&state.phi);
+    let g = |i: usize, j: usize| metric.components()[i][j].into_value();
+    let e: [f64; 2] = core::array::from_fn(|i| kinematics.tangent.components()[i].into_value());
+    // e_s: e_sigma rotated by 90 degrees in the metric.
+    let lowered: [f64; 2] = core::array::from_fn(|i| (0..2).map(|j| g(i, j) * e[j]).sum());
+    let det = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
+    let es = [-lowered[1] / det.sqrt(), lowered[0] / det.sqrt()];
+    let es_low: [f64; 2] = core::array::from_fn(|i| (0..2).map(|j| g(i, j) * es[j]).sum());
+    let potential =
+        MultifieldPotentialValue::<f64, 2>::value(&system.potential, state.phi).into_value();
+    let hessian = system.covariant_potential_hessian(state);
+    // The gravitational part of the mass matrix is proportional to the
+    // velocity on its right, so it drops out along e_s.
+    let mass = system.perturbation_mass_matrix(state);
+    let eta_sigma_sigma = (0..4)
+        .map(|m| e[m / 2] * e[m % 2] * hessian.components()[m / 2][m % 2].value())
+        .sum::<f64>()
+        / potential;
+    let eta_ss = (0..4)
+        .map(|m| es_low[m / 2] * mass.components()[m / 2][m % 2].value() * es[m % 2])
+        .sum::<f64>()
+        / potential;
+    Some(SlowRollParameters {
+        epsilon_h: system.epsilon_h(state),
+        eta_sigma_sigma,
+        eta_ss,
+        eta_perp: kinematics.eta_perp.into_value(),
+    })
+}
+
+/// `n_s(t_*) = 1 - 6 epsilon + 2 eta_sigma_sigma`, KMS Eq. (85), at the
+/// crossing `pivot_before_end` e-folds before the end of `survey`.
+pub fn slow_roll_tilt(
+    system: &KmsSystem,
+    survey: &BackgroundSurvey<2>,
+    pivot_before_end: f64,
+) -> Option<f64> {
+    let star = survey
+        .trajectory
+        .state_at(survey.e_folds_at_end - pivot_before_end);
+    let p = slow_roll_parameters(system, &star)?;
+    Some(1.0 - 6.0 * p.epsilon_h + 2.0 * p.eta_sigma_sigma)
+}
+
+/// The transfer functions `(T_RS, T_SS)` from the crossing `from_before_end`
+/// e-folds before the end of `survey` to `to_before_end`, by KMS Eqs. (70),
+/// (72), and (77): `dT_RS/dN = alpha T_SS` and `d ln T_SS/dN = beta`, with
+/// `alpha = 2 eta_perp` and
+/// `beta = -2 epsilon - eta_ss + eta_sigma_sigma - 4 eta_perp^2 / 3`, by the
+/// trapezoid rule in steps of about `step` e-folds. `beta` is the slow-roll
+/// limit, so the result holds only while the fields roll slowly.
+pub fn transfer_functions(
+    system: &KmsSystem,
+    survey: &BackgroundSurvey<2>,
+    from_before_end: f64,
+    to_before_end: f64,
+    step: f64,
+) -> Option<(f64, f64)> {
+    let rates = |n: f64| {
+        let p = slow_roll_parameters(system, &survey.trajectory.state_at(n))?;
+        let beta =
+            -2.0 * p.epsilon_h - p.eta_ss + p.eta_sigma_sigma - 4.0 / 3.0 * p.eta_perp * p.eta_perp;
+        Some((2.0 * p.eta_perp, beta))
+    };
+    let start = survey.e_folds_at_end - from_before_end;
+    let interval = from_before_end - to_before_end;
+    let steps = (interval / step).ceil().max(1.0) as usize;
+    let dn = interval / steps as f64;
+    let (mut t_rs, mut log_t_ss) = (0.0_f64, 0.0_f64);
+    let mut previous = rates(start)?;
+    for i in 1..=steps {
+        let next = rates(start + dn * i as f64)?;
+        let t_ss_before = log_t_ss.exp();
+        log_t_ss += 0.5 * (previous.1 + next.1) * dn;
+        t_rs += 0.5 * (previous.0 * t_ss_before + next.0 * log_t_ss.exp()) * dn;
+        previous = next;
+    }
+    Some((t_rs, log_t_ss.exp()))
 }
