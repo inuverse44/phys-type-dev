@@ -236,7 +236,7 @@ Two slices agree to $10^{-6}$, and where the transport converges (3 e-folds
 before the end on trajectory 2) the split reproduces it to $10^{-5}$
 (`tests/kms_trajectories.rs`). Phase-space $\delta N$ by finite differences,
 which does not use the cubic flow, gives 38.303–38.305 for trajectory 2.
-The gap to 43.3 is split term by term in section 5.9 of the note: where
+The gap to 43.3 is split term by term in the note ("[KMS] の 43.3 との差の内訳"): where
 $N$ stops being counted ($-10.3$), the slow-roll velocities ($-2.0$), and
 the statistics at horizon exit ($+7.2$). Details, with the derivation and
 the numerical checks, are in appendix F of
