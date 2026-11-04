@@ -1,4 +1,5 @@
-//! Adiabatic and entropy power spectra built from a two-field mode matrix.
+//! Power spectra built from a mode matrix: the invariant spectra for any
+//! number of fields, and the adiabatic and entropy projection for two fields.
 //!
 //! The mode covariance is complex and carries two upper field-space indices.
 //! Projecting it onto the adiabatic and entropy directions requires lowered
