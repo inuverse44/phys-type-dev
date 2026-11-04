@@ -1,6 +1,7 @@
 //! The three trajectories of arXiv:1210.7487 (KMS) off the ridge `chi = 0`:
 //! their background (Figs. 3 and 7), the crossing-time delta N of Sec. V
-//! (Fig. 11), and the tree-level f_NL split at a slice (G4). The tests are expensive in debug builds; run them with
+//! (Fig. 11), the spectra of Sec. IV (G3), and the tree-level f_NL split at
+//! a slice (G4). The tests are expensive in debug builds; run them with
 //! `cargo test --release -- --ignored`. See
 //! `docs/general-nonminimal-inflation.md`.
 
@@ -9,7 +10,8 @@ use phys_type::{
     MomentumTriangle, SpectrumRunSettings, SplitSettings, curvature_correlators,
 };
 use phys_type_models::kms::{
-    KmsSystem, PHI_START, TRAJECTORIES, at_rest, benchmark_system, crossing_delta_n, turn_peak,
+    KmsSystem, PHI_START, TRAJECTORIES, at_rest, benchmark_system, crossing_delta_n,
+    slow_roll_tilt, transfer_functions, turn_peak,
 };
 
 fn settings() -> SpectrumRunSettings {
@@ -210,4 +212,68 @@ fn the_split_matches_the_transport_where_the_transport_converges() {
         "split {split} vs transport {direct}"
     );
     assert!((direct - 40.9458).abs() < 1.0e-3, "transport {direct}");
+}
+
+#[test]
+#[ignore = "expensive; run in release mode"]
+fn the_spectra_at_n_60_reproduce_kms_sec_iv() {
+    // G3. KMS Sec. IV: n_s(t_*) = 0.967 for all three trajectories from the
+    // slow-roll Eq. (85), and T_RS from N_* = 60 to 40 e-folds before the
+    // end of 0.530, 0.011, and 0.001, from Eqs. (70), (72), and (77).
+    let system = benchmark_system(Formulation::Metric);
+    let precise = SpectrumRunSettings {
+        tolerances: ErrorTolerances::new(
+            ConformalPerturbationTolerance::<2>::background_in_planck_units(1.0e-23),
+            1.0e-13,
+        ),
+        background_sample_every: usize::MAX,
+        ..settings()
+    };
+    let transfer = [0.530, 0.011, 0.001];
+    for (index, (chi0, expected)) in TRAJECTORIES.into_iter().zip(transfer).enumerate() {
+        let label = index + 1;
+        let survey = system.survey(at_rest(PHI_START, chi0), &precise).unwrap();
+        let tilt = slow_roll_tilt(&system, &survey, 60.0).unwrap();
+        assert!(
+            (tilt - 0.967).abs() < 5.0e-4,
+            "trajectory {label}: n_s(t_*) {tilt}"
+        );
+        let (t_rs, _) = transfer_functions(&system, &survey, 60.0, 40.0, 1.0e-3).unwrap();
+        assert!(
+            (t_rs - expected).abs() < 5.0e-4,
+            "trajectory {label}: T_RS {t_rs} against {expected}"
+        );
+        // The exact spectrum 5 e-folds after crossing has the same tilt as
+        // Eq. (85) to the next slow-roll order (0.9677--0.9678).
+        let tilt_at = |before: f64| {
+            let end = survey.e_folds_at_end;
+            let pivot = survey.trajectory.state_at(end - 60.0);
+            let k = (pivot.a * system.hubble(&pivot)).into_value();
+            let curvature = |kk: f64| {
+                system
+                    .mode_spectrum(&precise, &survey.trajectory, Mass::new(kk), end - before)
+                    .unwrap()
+                    .spectra
+                    .curvature
+                    .into_value()
+            };
+            let step: f64 = 0.02;
+            1.0 + (curvature(k * step.exp()) / curvature(k * (-step).exp())).ln() / (2.0 * step)
+        };
+        let exact = tilt_at(55.0);
+        assert!(
+            (exact - tilt).abs() < 1.0e-3,
+            "trajectory {label}: n_s {exact} 55 e-folds before the end against {tilt}"
+        );
+        // On trajectory 2 the turn 5 e-folds before the end tilts the
+        // spectrum read off at the end of inflation to 0.936; KMS Fig. 10
+        // shows n_s(t_*) only.
+        if index == 1 {
+            let at_end = tilt_at(0.01);
+            assert!(
+                (at_end - 0.936_16).abs() < 1.0e-4,
+                "n_s at the end {at_end}"
+            );
+        }
+    }
 }

@@ -1219,6 +1219,51 @@ crossing-time $\delta N$ は、$\chi(\tau_0)=1.05\times10^{-3}$ で $+2\times10^
 右下：crossing-time $\delta N$ による $|\fnl|$ を $\chi(\tau_0)$ に対して描いたもの（[KMS] Fig.~11）。灰色は曲がり角で $\epsilon_H=1$ に届いた点、星印は [KMS] の 43.3。}
 \end{figure}
 
+\subsection{スペクトル（G3）}
+\label{sec:kms-g3}
+
+[KMS] の $n_s=0.967$ と $T_{\mathcal{RS}}$ は、どちらも印刷された桁まで再現できる。
+ただし $n_s=0.967$ は地平線を出た時刻の slow roll の式から出した値である。
+インフレーションの終わりで読み取った厳密な $n_s$ は、軌道 2 では 0.936 になる。
+
+[KMS] は Sec.~IV で、二つの量を slow roll の式から求めている\cite{KMS2013}。
+一つ目は地平線を出た時刻 $t_*$ のスペクトル指数で、Eq.~(85) の $n_s(t_*)=1-6\epsilon+2\eta_{\sigma\sigma}$ である。
+二つ目は、等曲率摂動が曲率摂動をどれだけ作るかを表す $T_{\mathcal{RS}}$ である。
+$\mathcal R$ の変化は回転率に比例するので、$T_{\mathcal{RS}}$ は回転率を $T_{\mathcal{SS}}$ の重みで積分したものになる。
+\[
+T_{\mathcal{RS}}(t_*,t)=\int_{N_*}^{N}dN'\,2\eta_\perp\,T_{\mathcal{SS}},\qquad
+T_{\mathcal{SS}}=\exp\int_{N_*}^{N}dN'\,\beta,\qquad
+\beta=-2\epsilon-\eta_{ss}+\eta_{\sigma\sigma}-\frac43\eta_\perp^2 .
+\]
+これが Eqs.~(70), (72), (77) である。
+この二つを、厳密に解いた背景の上で同じ式のまま評価した。
+$N_{40}$ はインフレーションの終わりの 40 e-fold 前と読んだ。
+\begin{center}
+\begin{tabular}{cccc}
+\toprule
+軌道 & $n_s(t_*)$, Eq.~(85) & $T_{\mathcal{RS}}(N_{40})$ & [KMS] \\
+\midrule
+1 & 0.966968 & 0.5304 & 0.967, 0.530 \\
+2 & 0.966983 & 0.01097 & 0.967, 0.011 \\
+3 & 0.967019 & 0.00108 & 0.967, 0.001 \\
+\bottomrule
+\end{tabular}
+\end{center}
+背景の許容誤差を $10^{-12}$ から $10^{-14}$ まで、積分の刻みを $5\times10^{-4}$ から $2\times10^{-3}$ e-fold まで変えても、表の桁は変わらない。
+
+次に、モード方程式を解いて $P_{\mathcal R}$ を求め、$\ln k$ の中心差分で $n_s$ を出した。
+pivot が地平線を出た 5 e-fold 後に読むと、三本とも 0.9677--0.9678 で、Eq.~(85) との差は $10^{-3}$ 未満である。
+\S\ref{sec:kms-gap} の $\fnl$ と同じく、終わりの 0.01 e-fold 前の $H$ が一定の面で読むと、軌道 1 は 0.96771、軌道 3 は 0.96774 である。
+ところが軌道 2 は 0.93616 になる。
+終わりの約 5 e-fold 前の曲がりで、pivot の $P_{\mathcal R}$ は 3 分の 1 ほど増える。等曲率摂動から作られる分が $k$ によって違うので、スペクトルが傾くと考えられる。
+この値は、差分の刻み（0.01--0.04）、背景の許容誤差（$10^{-12}$--$10^{-14}$）、モードを始める深さ（地平線を出る 4--8 e-fold 前）を変えても、$4\times10^{-6}$ しか動かない。
+[KMS] の図 10 は $n_s(t_*)$ だけを描いているので、印刷された値と食い違うわけではない。
+ただ、軌道 2 で観測にかかる傾きは 0.967 ではない。
+しかも \ref{app:after-inflation} のとおり、軌道 2 ではインフレーションのあとも $\zeta$ が変わるので、この 0.936 も最終的な値ではない。
+
+数値は \href{\repourl/blob/main/crates/phys-type-models/examples/kms_transport_probe.rs}{\texttt{kms\_transport\_probe}} の \code{spectra} で得た。
+テストは \href{\repourl/blob/main/crates/phys-type-models/tests/kms_trajectories.rs}{\texttt{kms\_trajectories.rs}} にある。
+
 \subsection{\texorpdfstring{$\fnl$：crossing-time $\delta N$}{fNL：crossing-time δN}（G4、KMS の方法）}
 
 [KMS] と同じ方法（pivot は $N_*=60$、地平線を出たときの場の値で中心差分、速度は slow roll、Riemann の項は落とす）で計算した。
@@ -1397,14 +1442,13 @@ transport で求めた統計は、地平線を出る約 1.1 e-fold 前に質量�
 \midrule
 G1 & 完了 & 幾何の閉じた式と自動微分の一致。Eq.~115 の誤植を発見 \\
 G2 & 完了 & 三本の軌道、図、インフレーションの中断に近いことの発見 \\
-G3 & 未着手 & $n_s$（[KMS] は 0.967）と $T_{\mathcal{RS}}$ \\
+G3 & 完了 & $n_s(t_*)$ と $T_{\mathcal{RS}}(N_{40})$ は印刷された桁まで一致。終わりで読む厳密な $n_s$ は軌道 2 で 0.936（\S\ref{sec:kms-g3}） \\
 G4 & 一部完了 & crossing-time $\delta N$ は一致。スライスでつなぐ計算をライブラリとテストにした（軌道 2 で 38.287）。43.3 との差の内訳は済み（\S\ref{sec:kms-gap}）。値はインフレーションの終わり間際の 38.287 とする（インフレーションのあとは\ref{app:after-inflation}） \\
 G5 & 未着手 & Palatini 版。比べられる文献値がないので整合性のチェックだけ \\
 G6 & 範囲外 & Jordan frame の $\zeta$。別に設計する \\
 \bottomrule
 \end{tabular}
 \end{center}
-G3 の注意：[KMS] の $n_s=0.967$ は地平線を出たときの値で、このリポジトリが終わりで評価する厳密な $n_s$ とは定義が違う。軌道 2 のように地平線の外で等曲率摂動が曲率摂動に変わる場合、二つは一致しない。
 
 %======================================================================
 \section{その他の再現結果}

@@ -8,6 +8,15 @@ the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `phys_type_models::kms::{slow_roll_parameters, slow_roll_tilt,
+  transfer_functions}`: the slow-roll `n_s(t_*)` of KMS Eq. (85) and the
+  transfer function `T_RS` of Eqs. (70), (72), and (77), evaluated on the
+  exact background. `tests/kms_trajectories.rs` checks G3: `n_s(t_*) =
+  0.967` for all three trajectories and `T_RS(N_40) = 0.530, 0.011, 0.001`,
+  every printed digit. The exact `n_s` read off at the end of inflation is
+  0.936 on trajectory 2, where the late turn tilts the spectrum; KMS print
+  `n_s(t_*)` only. The probe gains a `spectra` mode and the overrides
+  `KMS_TILT_STEP`, `KMS_TRS_STEP`, and `KMS_EXIT_DEPTH`.
 - `phys_type::split`: `CovariantMultifieldSystem::split_curvature_correlators`
   stops the tree-level transport on a superhorizon slice and continues with
   the response of the final `zeta`, integrated backwards with the adjoint of

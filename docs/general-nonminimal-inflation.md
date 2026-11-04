@@ -126,7 +126,7 @@ tolerance chosen to pass.
 | --- | --- | --- |
 | G1 (done) | `phys_type_models::kms::KmsTheory` as a `GeneralizedNonminimal<2>`; closed-form Einstein-frame metric ([KMS] Eq. 110) and Gaussian curvature as test oracles | `einstein_frame` reproduces the metric to $10^{-13}$, the Riemann tensor to $10^{-10}$, and $\nabla R$ to the finite-difference error, metric and Palatini. [KMS] Eq. (115) prints twice the Ricci scalar ([`literature-discrepancies.md`](literature-discrepancies.md) entry 14) |
 | G2 (done) | background of the three trajectories | total e-folds and turn-rate peaks of the table; the tracked figure `figures/kms_trajectories.png` (Figs. 2–3, 7, and 11) |
-| G3 | spectra at $N_*=60$ | $n_s$ to the precision printed; $T_{\mathcal{RS}}$ once $N_{40}$ is fixed |
+| G3 (done) | spectra at $N_*=60$ | $n_s$ to the precision printed; $T_{\mathcal{RS}}$ once $N_{40}$ is fixed |
 | G4 | equilateral $f_{\mathrm{NL}}$ at $N_*=60$ | transport against phase-space $\delta N$ to $\lesssim10^{-3}$ for all three; trajectory 2 against 43.3 with the slow-roll-velocity and Riemann-term differences quantified; scan of $f_{\mathrm{NL}}$ against $\chi(\tau_0)$ around trajectory 2 (Fig. 11) |
 | G5 | the Palatini counterpart (below) | consistency checks only |
 | G6 | the Jordan-frame $\zeta$ (below) | separate design; not part of this step |
@@ -134,7 +134,7 @@ tolerance chosen to pass.
 ## Results
 
 The tests are `crates/phys-type-models/tests/kms.rs` (G1) and
-`tests/kms_trajectories.rs` (G2, G4; ignored, release mode).
+`tests/kms_trajectories.rs` (G2–G4; ignored, release mode).
 
 **Background (G2).** Starting from rest, trajectory 2 inflates for 71.517
 e-folds, against 71.5 in Fig. 3; the slow-roll initial velocity gives 71.19,
@@ -168,6 +168,35 @@ by
 cargo run --release --example kms_trajectories
 uv run plots/kms_trajectories.py diagnostics
 ```
+
+**Spectra (G3).** [KMS] Sec. IV gives $n_s(t_*)$ from the slow-roll
+Eq. (85), $1-6\epsilon+2\eta_{\sigma\sigma}$ at the crossing of the pivot,
+and $T_{\mathcal{RS}}$ from Eqs. (70), (72), and (77), the integral of the
+turn rate weighted by the slow-roll $T_{\mathcal{SS}}$. Evaluated on the exact
+background (`kms::slow_roll_tilt`, `kms::transfer_functions`), with
+$N_{40}$ read as 40 e-folds before the end:
+
+| trajectory | $n_s(t_*)$, Eq. (85) | $T_{\mathcal{RS}}(N_{40})$ | [KMS] |
+| --- | --- | --- | --- |
+| 1 | 0.966968 | 0.5304 | 0.967, 0.530 |
+| 2 | 0.966983 | 0.01097 | 0.967, 0.011 |
+| 3 | 0.967019 | 0.00108 | 0.967, 0.001 |
+
+Both reproduce every printed digit, unchanged at background tolerances
+$10^{-12}$–$10^{-14}$ and integration steps $5\times10^{-4}$–$2\times10^{-3}$.
+The exact mode solver, $n_s$ by a central difference in $\ln k$, gives
+0.9677–0.9678 for the pivot 5 e-folds after crossing on all three, one
+slow-roll order from Eq. (85). Read off on the uniform-$H$ slice 0.01
+e-folds before the end, as for G4, it gives 0.96771 on trajectory 1 and
+0.96774 on trajectory 3, but 0.93616 on trajectory 2: the turn 5 e-folds
+before the end raises $P_\mathcal{R}$ of the pivot by a third and tilts the
+spectrum. [KMS] Fig. 10 plots $n_s(t_*)$ only, so this is not a
+disagreement with what they print, but the observable tilt of trajectory 2
+is not 0.967. On trajectory 2 the value at the end moves by at most
+$4\times10^{-6}$ with the step of the difference (0.01–0.04), the background
+tolerance ($10^{-12}$–$10^{-14}$), and the start depth of the modes (4–8
+e-folds before exit).
+The data come from `kms_transport_probe -- spectra`.
 
 **Crossing-time $\delta N$ (G4, the method of [KMS]).** With the field
 derivatives of $N$ at the crossing of the pivot and slow-roll velocities,
@@ -207,8 +236,9 @@ Two slices agree to $10^{-6}$, and where the transport converges (3 e-folds
 before the end on trajectory 2) the split reproduces it to $10^{-5}$
 (`tests/kms_trajectories.rs`). Phase-space $\delta N$ by finite differences,
 which does not use the cubic flow, gives 38.303–38.305 for trajectory 2.
-The gap to 43.3 (slow-roll velocities, Riemann terms, evaluation at
-crossing) is not yet split term by term. Details, with the derivation and
+The gap to 43.3 is split term by term in section 5.9 of the note: where
+$N$ stops being counted ($-10.3$), the slow-roll velocities ($-2.0$), and
+the statistics at horizon exit ($+7.2$). Details, with the derivation and
 the numerical checks, are in appendix F of
 [`notes/overview`](../notes/overview/phys-type-overview.pdf) and issue #67.
 
